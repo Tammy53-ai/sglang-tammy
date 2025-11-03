@@ -82,6 +82,10 @@ class LogitsProcessorOutput:
     input_token_ids_logprobs_val: Optional[List] = None
     input_token_ids_logprobs_idx: Optional[List] = None
 
+    ## Part 4: MoE expert router indices
+    # The expert indices selected by the router for each token. shape: [#token, top_k]
+    expert_router_indices: Optional[torch.Tensor] = None
+
 
 @dataclasses.dataclass
 class LogitsMetadata:
@@ -242,6 +246,8 @@ class LogitsProcessor(nn.Module):
         logits_metadata: Union[LogitsMetadata, ForwardBatch],
         aux_hidden_states: Optional[torch.Tensor] = None,
     ) -> LogitsProcessorOutput:
+        # Save reference to forward_batch to extract expert_router_indices
+        forward_batch_ref = logits_metadata if isinstance(logits_metadata, ForwardBatch) else None
         if isinstance(logits_metadata, ForwardBatch):
             logits_metadata = LogitsMetadata.from_forward_batch(logits_metadata)
         # Get the last hidden states and last logits for the next token prediction
@@ -367,9 +373,13 @@ class LogitsProcessor(nn.Module):
 
         if not logits_metadata.extend_return_logprob:
             # Decode mode or extend mode without return_logprob.
+            expert_router_indices = None
+            if forward_batch_ref is not None and forward_batch_ref.return_expert_router_indices:
+                expert_router_indices = forward_batch_ref.expert_router_indices
             return LogitsProcessorOutput(
                 next_token_logits=sampled_logits,
                 hidden_states=hidden_states_to_store,
+                expert_router_indices=expert_router_indices,
             )
         else:
             input_logprobs = logits[input_logprob_indices]
@@ -417,6 +427,9 @@ class LogitsProcessor(nn.Module):
                 logits_metadata.extend_input_logprob_token_ids_gpu,
             ]
 
+            expert_router_indices = None
+            if forward_batch_ref is not None and forward_batch_ref.return_expert_router_indices:
+                expert_router_indices = forward_batch_ref.expert_router_indices
             return LogitsProcessorOutput(
                 next_token_logits=sampled_logits,
                 input_token_logprobs=input_token_logprobs,
@@ -425,6 +438,7 @@ class LogitsProcessor(nn.Module):
                 hidden_states=hidden_states_to_store,
                 input_token_ids_logprobs_val=input_token_ids_logprobs_val,
                 input_token_ids_logprobs_idx=input_token_ids_logprobs_idx,
+                expert_router_indices=expert_router_indices,
             )
 
     def _get_logits(

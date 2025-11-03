@@ -253,6 +253,10 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
         dispatch_output: StandardDispatchOutput,
     ) -> CombineInput:
 
+        # if layer.layer_id == 0 and layer.moe_tp_rank == 0:
+        #     torch.save(layer.w2_weight, f"layer_{layer.layer_id}_rank_{layer.moe_tp_rank}_w2_weight_.pt")
+        #     assert False
+
         from sglang.srt.layers.moe.token_dispatcher import StandardCombineInput
 
         x = dispatch_output.hidden_states

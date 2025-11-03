@@ -135,7 +135,7 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
 
         if not get_moe_a2a_backend().is_deepep():
             return self.forward_normal(
-                hidden_states, should_allreduce_fusion, use_reduce_scatter
+                hidden_states, forward_batch, should_allreduce_fusion, use_reduce_scatter
             )
         else:
             return self.forward_deepep(hidden_states, forward_batch)
@@ -150,6 +150,7 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
     def forward_normal(
         self,
         hidden_states: torch.Tensor,
+        forward_batch: Optional[ForwardBatch] = None,
         should_allreduce_fusion: bool = False,
         use_reduce_scatter: bool = False,
     ) -> torch.Tensor:
@@ -159,6 +160,43 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
         # router_logits: (num_tokens, n_experts)
         router_logits, _ = self.gate(hidden_states)
         topk_output = self.topk(hidden_states, router_logits)
+        
+        # Extract and save expert indices to forward_batch
+        if forward_batch is not None:
+            # Check if any request in the batch needs expert router indices
+            return_expert_router_indices = getattr(forward_batch, 'return_expert_router_indices', False)
+            if return_expert_router_indices:
+                from sglang.srt.layers.moe.topk import (
+                    TopKOutputChecker,
+                    StandardTopKOutput,
+                    TritonKernelTopKOutput,
+                )
+                
+                if TopKOutputChecker.format_is_standard(topk_output):
+                    # topk_ids shape: (num_tokens, top_k)
+                    expert_indices = topk_output.topk_ids
+                    # print(f"ht debug expert_indices shape: {expert_indices.shape}", flush=True)
+                elif TopKOutputChecker.format_is_triton_kernel(topk_output):
+                    # For triton kernel, routing_data contains expert indices
+                    # routing_data shape: (num_tokens, top_k, 3) where last dim is [expert_id, weight, ...]
+                    expert_indices = topk_output.routing_data[:, :, 0].to(torch.int32)
+                else:
+                    # For bypassed format, we'll extract indices later
+                    expert_indices = None
+                
+                # Store expert indices in forward_batch
+                if expert_indices is not None:
+                    if forward_batch.expert_router_indices is None:
+                        # Initialize with shape [1, seq_len, top_k] for the first layer
+                        forward_batch.expert_router_indices = expert_indices.unsqueeze(0)
+                    else:
+                        # Append to existing indices if this is not the first MoE layer
+                        # expert_indices shape: [seq_len, top_k]
+                        # forward_batch.expert_router_indices shape: [layer_num, seq_len, top_k]
+                        forward_batch.expert_router_indices = torch.cat(
+                            [forward_batch.expert_router_indices, expert_indices.unsqueeze(0)], dim=0
+                        )
+        
         final_hidden_states = self.experts(hidden_states, topk_output)
         if (
             self.tp_size > 1
@@ -297,6 +335,7 @@ class Qwen3MoeAttention(nn.Module):
         alt_stream: Optional[torch.cuda.Stream] = None,
     ) -> None:
         super().__init__()
+        self.layer_id = layer_id
         self.hidden_size = hidden_size
 
         attn_tp_rank = get_attention_tp_rank()
@@ -417,6 +456,10 @@ class Qwen3MoeAttention(nn.Module):
         return None, forward_batch, inner_state
 
     def forward_core(self, intermediate_state):
+        # if self.layer_id == 0 and self.tp_rank == 0:
+        #     torch.save(self.o_proj.weight, f"layer_{self.layer_id}_rank_{self.tp_rank}_o_proj_weight.pt")
+        #     assert False
+
         hidden_states, forward_batch, inner_state = intermediate_state
         if inner_state is None:
             return hidden_states

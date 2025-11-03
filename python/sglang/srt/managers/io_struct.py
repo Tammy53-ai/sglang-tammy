@@ -101,6 +101,8 @@ class GenerateReqInput:
     log_metrics: bool = True
     # Whether to return hidden states
     return_hidden_states: Union[List[bool], bool] = False
+    # Whether to return expert router indices for MoE models
+    return_expert_router_indices: Union[List[bool], bool] = False
 
     # The modalities of the image data [image, multi-images, video]
     modalities: Optional[List[str]] = None
@@ -511,6 +513,11 @@ class GenerateReqInput:
                 if isinstance(self.return_hidden_states, list)
                 else self.return_hidden_states
             ),
+            return_expert_router_indices=(
+                self.return_expert_router_indices[i]
+                if isinstance(self.return_expert_router_indices, list)
+                else self.return_expert_router_indices
+            ),
             modalities=self.modalities[i] if self.modalities else None,
             session_params=self.session_params,
             lora_path=self.lora_path[i] if self.lora_path is not None else None,
@@ -569,6 +576,8 @@ class TokenizedGenerateReqInput:
     stream: bool
     # Whether to return hidden states
     return_hidden_states: bool = False
+    # Whether to return expert router indices for MoE models
+    return_expert_router_indices: bool = False
 
     # The input embeds
     input_embeds: Optional[Union[List[List[List[float]]], List[List[float]]]] = None
@@ -817,6 +826,9 @@ class BatchTokenIDOut:
     placeholder_tokens_idx: List[Optional[List[int]]]
     placeholder_tokens_val: List[Optional[List[int]]]
 
+    # MoE expert router indices
+    expert_router_indices: List[Optional[List[List[int]]]] = None
+
 
 @dataclass
 class BatchMultimodalDecodeReq:
@@ -883,6 +895,9 @@ class BatchStrOut:
 
     placeholder_tokens_idx: List[Optional[List[int]]]
     placeholder_tokens_val: List[Optional[List[int]]]
+
+    # MoE expert router indices
+    expert_router_indices: List[Optional[List[List[int]]]] = None
 
 
 @dataclass

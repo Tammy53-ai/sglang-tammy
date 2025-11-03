@@ -1178,6 +1178,7 @@ class Scheduler(
                 input_embeds=recv_req.input_embeds,
                 custom_logit_processor=recv_req.custom_logit_processor,
                 return_hidden_states=recv_req.return_hidden_states,
+                return_expert_router_indices=recv_req.return_expert_router_indices,
                 eos_token_ids=self.model_config.hf_eos_token_id,
                 bootstrap_host=recv_req.bootstrap_host,
                 bootstrap_port=recv_req.bootstrap_port,

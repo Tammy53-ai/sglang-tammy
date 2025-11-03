@@ -428,6 +428,7 @@ class Req:
         session_id: Optional[str] = None,
         custom_logit_processor: Optional[str] = None,
         return_hidden_states: bool = False,
+        return_expert_router_indices: bool = False,
         eos_token_ids: Optional[Set[int]] = None,
         bootstrap_host: Optional[str] = None,
         bootstrap_port: Optional[int] = None,
@@ -466,6 +467,7 @@ class Req:
         self.sampling_params = sampling_params
         self.custom_logit_processor = custom_logit_processor
         self.return_hidden_states = return_hidden_states
+        self.return_expert_router_indices = return_expert_router_indices
         self.lora_id = lora_id
 
         # Memory pool info
@@ -615,6 +617,9 @@ class Req:
         self.tmp_end_idx: int = -1
         self.metadata_buffer_index: int = -1
 
+        # For MoE expert router indices
+        self.expert_router_indices: List[List[int]] = []
+
     @property
     def seqlen(self):
         return len(self.origin_input_ids) + len(self.output_ids)
@@ -671,6 +676,11 @@ class Req:
 
         if self.return_logprob:
             max_prefix_len = min(max_prefix_len, self.logprob_start_len)
+
+        # If return_expert_router_indices=True, disable prefix cache entirely
+        # to ensure all tokens go through MoE layers
+        if self.return_expert_router_indices:
+            max_prefix_len = 0
 
         max_prefix_len = max(max_prefix_len, 0)
         return self.fill_ids[:max_prefix_len]
@@ -906,6 +916,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
 
     # Whether to return hidden states
     return_hidden_states: bool = False
+    return_expert_router_indices: bool = False
 
     # Whether this batch is prefill-only (no token generation needed)
     is_prefill_only: bool = False
@@ -950,6 +961,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
             device=req_to_token_pool.device,
             spec_algorithm=spec_algorithm,
             return_hidden_states=any(req.return_hidden_states for req in reqs),
+            return_expert_router_indices=any(req.return_expert_router_indices for req in reqs),
             is_prefill_only=all(
                 req.sampling_params.max_new_tokens == 0 for req in reqs
             ),
@@ -1687,6 +1699,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
         self.has_stream |= other.has_stream
         self.has_grammar |= other.has_grammar
         self.return_hidden_states |= other.return_hidden_states
+        self.return_expert_router_indices |= other.return_expert_router_indices
 
         if self.spec_info:
             self.spec_info.merge_batch(other.spec_info)
@@ -1762,6 +1775,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
                 )
             ),
             extend_input_logprob_token_ids=self.extend_input_logprob_token_ids,
+            return_expert_router_indices=self.return_expert_router_indices,
             launch_done=self.launch_done,
         )
 
@@ -1901,6 +1915,9 @@ class ModelWorkerBatch:
     # If set, the output of the batch contains the hidden states of the run.
     capture_hidden_mode: CaptureHiddenMode = None
     hicache_consumer_index: int = -1
+
+    # Whether to return expert router indices for MoE models
+    return_expert_router_indices: bool = False
 
     # Overlap event
     launch_done: Optional[threading.Event] = None

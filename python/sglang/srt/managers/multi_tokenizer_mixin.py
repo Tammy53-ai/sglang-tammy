@@ -197,6 +197,11 @@ def _handle_output_by_index(output, i):
             ),
             placeholder_tokens_idx=None,
             placeholder_tokens_val=None,
+            expert_router_indices=(
+                [output.expert_router_indices[i]]
+                if output.expert_router_indices and i < len(output.expert_router_indices)
+                else None
+            ),
         )
     elif isinstance(output, BatchEmbeddingOut):
         new_output = BatchEmbeddingOut(
@@ -313,6 +318,11 @@ def _handle_output_by_index(output, i):
             ),
             placeholder_tokens_idx=None,
             placeholder_tokens_val=None,
+            expert_router_indices=(
+                [output.expert_router_indices[i]]
+                if output.expert_router_indices and i < len(output.expert_router_indices)
+                else None
+            ),
         )
     elif isinstance(output, BatchMultimodalOut):
         new_output = BatchMultimodalOut(

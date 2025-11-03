@@ -71,6 +71,7 @@ class SchedulerOutputProcessorMixin:
 
             # Check finish conditions
             logprob_pt = 0
+            expert_router_indices_offset = 0
             for i, (req, next_token_id) in enumerate(zip(batch.reqs, next_token_ids)):
                 if req.is_retracted:
                     continue
@@ -126,6 +127,28 @@ class SchedulerOutputProcessorMixin:
                             .tolist()
                         )
 
+                    # Store expert router indices for MoE models
+                    if (
+                        logits_output.expert_router_indices is not None
+                        and req.return_expert_router_indices
+                    ):
+                        # expert_router_indices shape: [layer_num, num_tokens, top_k]
+                        # Split by request's token count
+                        num_tokens_for_req = extend_input_len_per_req[i] if extend_input_len_per_req else len(req.origin_input_ids)
+                        req_indices = logits_output.expert_router_indices[
+                            :, expert_router_indices_offset : expert_router_indices_offset + num_tokens_for_req, :
+                        ]
+                        expert_router_indices_offset += num_tokens_for_req
+                        req.expert_router_indices.append(
+                            req_indices.cpu().clone().tolist()
+                        )
+                        # Calculate total tokens from stored chunks (they're lists, not tensors)
+                        total_tokens = sum([len(chunk[0]) if len(chunk) > 0 and len(chunk[0]) > 0 else 0 
+                                          for chunk in req.expert_router_indices])
+                        # print(f"[RouterIndices] Req {req.rid}: Stored prefill expert_router_indices chunk - "
+                        #       f"shape={req_indices.shape}, num_chunks={len(req.expert_router_indices)}, "
+                        #       f"total_tokens_so_far={total_tokens}")
+
                     if req.grammar is not None:
                         # FIXME: this try-except block is for handling unexpected xgrammar issue.
                         try:
@@ -165,6 +188,25 @@ class SchedulerOutputProcessorMixin:
                                     last_prefill_chunk=False,
                                 )
                             logprob_pt += num_input_logprobs
+
+                    # Store expert router indices for chunked prefill (not the last chunk)
+                    if (
+                        logits_output.expert_router_indices is not None
+                        and req.return_expert_router_indices
+                    ):
+                        # expert_router_indices shape: [layer_num, num_tokens, top_k]
+                        # For chunked prefill, we need to extract the current chunk's indices
+                        extend_input_len = extend_input_len_per_req[i] if extend_input_len_per_req else len(req.origin_input_ids)
+                        req_indices = logits_output.expert_router_indices[
+                            :, expert_router_indices_offset : expert_router_indices_offset + extend_input_len, :
+                        ]
+                        expert_router_indices_offset += extend_input_len
+                        req.expert_router_indices.append(
+                            req_indices.cpu().clone().tolist()
+                        )
+                        # print(f"[RouterIndices] Req {req.rid}: Stored chunked prefill expert_router_indices - "
+                        #       f"shape={req_indices.shape}, num_chunks={len(req.expert_router_indices)}, "
+                        #       f"chunk_len={extend_input_len}")
 
             self.set_next_batch_sampling_info_done(batch)
 
@@ -496,6 +538,7 @@ class SchedulerOutputProcessorMixin:
         cached_tokens = []
         spec_verify_ct = []
         output_hidden_states = None
+        expert_router_indices = []
 
         if return_logprob:
             input_token_logprobs_val = []
@@ -660,6 +703,45 @@ class SchedulerOutputProcessorMixin:
                         output_hidden_states = []
                     output_hidden_states.append(req.hidden_states)
 
+                # Add expert router indices for MoE models
+                if (
+                    req.expert_router_indices
+                    and req.return_expert_router_indices
+                ):
+                    # req.expert_router_indices is a list of lists, each with shape [layer_num, seq_len, top_k]
+                    # We need to concatenate them along the seq_len dimension (dim=1)
+                    import torch
+                    # Convert lists to tensors
+                    tensor_list = [torch.tensor(indices) for indices in req.expert_router_indices]
+                    if len(tensor_list) > 1:
+                        # Concatenate along seq_len dimension (dim=1)
+                        combined_indices = torch.cat(tensor_list, dim=1)
+                    else:
+                        combined_indices = tensor_list[0]
+                    
+                    # Since prefix cache is disabled when return_expert_router_indices=True,
+                    # all tokens are processed and indices should match origin_input_ids length
+                    # Similar to logprob validation: check length matches
+                    final_shape = combined_indices.shape
+                    expected_len = len(req.origin_input_ids)
+                    actual_seq_len = final_shape[1] if len(final_shape) > 1 else 0
+                    
+                    # Verify length (similar to logprob's assert check)
+                    assert actual_seq_len == expected_len, f"Length mismatch: expected={expected_len}, actual={actual_seq_len}, shape={final_shape}, num_chunks={len(req.expert_router_indices)}, origin_input_ids_len={len(req.origin_input_ids)}, prefix_indices_len={len(req.prefix_indices) if hasattr(req, 'prefix_indices') else 'N/A'}"
+                    # if actual_seq_len != expected_len:
+                    #     print(f"[RouterIndices] WARNING: Req {req.rid}: Length mismatch - "
+                    #           f"expected={expected_len}, actual={actual_seq_len}, "
+                    #           f"shape={final_shape}, num_chunks={len(req.expert_router_indices)}, "
+                    #           f"origin_input_ids_len={len(req.origin_input_ids)}, "
+                    #           f"prefix_indices_len={len(req.prefix_indices) if hasattr(req, 'prefix_indices') else 'N/A'}")
+                    # else:
+                    #     print(f"[RouterIndices] Req {req.rid}: Final expert_router_indices - "
+                    #           f"shape={final_shape}, num_chunks={len(req.expert_router_indices)}, "
+                    #           f"expected_len={expected_len}, actual_seq_len={actual_seq_len} ✓")
+                    expert_router_indices.append(combined_indices.tolist())
+                else:
+                    expert_router_indices.append(None)
+
             if (
                 req.finished()
                 and self.tp_rank == 0
@@ -702,6 +784,7 @@ class SchedulerOutputProcessorMixin:
                     output_hidden_states,
                     placeholder_tokens_idx=None,
                     placeholder_tokens_val=None,
+                    expert_router_indices=expert_router_indices,
                 )
             )
 

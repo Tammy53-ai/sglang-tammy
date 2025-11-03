@@ -309,6 +309,11 @@ class ForwardBatch:
     tbo_parent_token_range: Optional[Tuple[int, int]] = None
     tbo_children: Optional[List[ForwardBatch]] = None
 
+    # For MoE expert router indices - stores indices for each token in the batch
+    expert_router_indices: Optional[torch.Tensor] = None
+    # Whether to return expert router indices for this batch
+    return_expert_router_indices: bool = False
+
     @classmethod
     def init_new(
         cls,
@@ -349,6 +354,7 @@ class ForwardBatch:
             input_embeds=batch.input_embeds,
             token_type_ids=batch.token_type_ids,
             tbo_split_seq_index=batch.tbo_split_seq_index,
+            return_expert_router_indices=batch.return_expert_router_indices,
         )
         device = model_runner.device
 

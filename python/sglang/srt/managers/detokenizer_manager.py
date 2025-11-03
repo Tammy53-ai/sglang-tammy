@@ -248,6 +248,7 @@ class DetokenizerManager(MultiHttpWorkerDetokenizerMixin):
             output_hidden_states=recv_obj.output_hidden_states,
             placeholder_tokens_idx=None,
             placeholder_tokens_val=None,
+            expert_router_indices=getattr(recv_obj, "expert_router_indices", None),
         )
 
     def handle_multimodal_decode_req(self, recv_obj: BatchMultimodalDecodeReq):

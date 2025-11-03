@@ -558,6 +558,7 @@ class TokenizerManager(TokenizerCommunicatorMixin):
                 session_params=session_params,
                 custom_logit_processor=obj.custom_logit_processor,
                 return_hidden_states=obj.return_hidden_states,
+                return_expert_router_indices=obj.return_expert_router_indices,
                 data_parallel_rank=obj.data_parallel_rank,
             )
         elif isinstance(obj, EmbeddingReqInput):
@@ -1228,6 +1229,14 @@ class TokenizerManager(TokenizerCommunicatorMixin):
 
             if getattr(recv_obj, "output_hidden_states", None):
                 meta_info["hidden_states"] = recv_obj.output_hidden_states[i]
+
+            # Add expert router indices for MoE models
+            if (
+                getattr(recv_obj, "expert_router_indices", None)
+                and i < len(recv_obj.expert_router_indices)
+                and recv_obj.expert_router_indices[i] is not None
+            ):
+                meta_info["expert_router_indices"] = recv_obj.expert_router_indices[i]
 
             if isinstance(recv_obj, BatchStrOut):
                 state.text += recv_obj.output_strs[i]
