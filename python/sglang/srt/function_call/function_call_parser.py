@@ -38,6 +38,8 @@ class FunctionCallParser:
     """
 
     ToolCallParserEnum: Dict[str, Type[BaseFormatDetector]] = {
+        "qwen": Qwen25Detector,
+        "qwen25": Qwen25Detector,
         "deepseekv3": DeepSeekV3Detector,
         "deepseekv31": DeepSeekV31Detector,
         "glm": Glm4MoeDetector,
@@ -47,8 +49,6 @@ class FunctionCallParser:
         "llama3": Llama32Detector,
         "mistral": MistralDetector,
         "pythonic": PythonicDetector,
-        "qwen": Qwen25Detector,
-        "qwen25": Qwen25Detector,
         "qwen3_coder": Qwen3CoderDetector,
         "step3": Step3Detector,
         "minimax-m2": MinimaxM2Detector,
